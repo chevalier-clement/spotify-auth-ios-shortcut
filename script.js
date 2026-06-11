@@ -1,5 +1,3 @@
-const SCOPES_DEFAULT = 'playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public user-library-read user-library-modify';
-
 const generateRandomString = (length) => {
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   const values = crypto.getRandomValues(new Uint8Array(length));
@@ -33,18 +31,26 @@ const base64encode = (input) => {
   if (!code) {
     const clientId = urlParams.get('client_id');
     const shortcutName = urlParams.get('shortcut_name');
-    const scope = urlParams.get('scope') || SCOPES_DEFAULT;
+    const scope = urlParams.get('scope') || '';
 
     if (!clientId || !shortcutName) {
       document.getElementById('status').textContent = 'Missing required parameters: client_id and shortcut_name.';
       return;
     }
 
-    scope.split(' ').filter(Boolean).forEach(s => {
+    const scopeList = document.getElementById('scope-list');
+    const scopes = scope.split(' ').filter(Boolean);
+    if (scopes.length === 0) {
       const li = document.createElement('li');
-      li.textContent = s;
-      document.getElementById('scope-list').appendChild(li);
-    });
+      li.textContent = 'Public data only (no additional permissions)';
+      scopeList.appendChild(li);
+    } else {
+      scopes.forEach(s => {
+        const li = document.createElement('li');
+        li.textContent = s;
+        scopeList.appendChild(li);
+      });
+    }
 
     document.getElementById('status').hidden = true;
     document.getElementById('auth-prompt').hidden = false;
@@ -59,16 +65,18 @@ const base64encode = (input) => {
       window.localStorage.setItem('shortcut_name', shortcutName);
       window.localStorage.setItem('oauth_state', state);
 
-      const authUrl = new URL('https://accounts.spotify.com/authorize');
-      authUrl.search = new URLSearchParams({
+      const authParams = {
         response_type: 'code',
         client_id: clientId,
-        scope,
         code_challenge_method: 'S256',
         code_challenge: codeChallenge,
         redirect_uri: redirectUri,
         state,
-      }).toString();
+      };
+      if (scope) authParams.scope = scope;
+
+      const authUrl = new URL('https://accounts.spotify.com/authorize');
+      authUrl.search = new URLSearchParams(authParams).toString();
 
       window.location.href = authUrl.toString();
     });

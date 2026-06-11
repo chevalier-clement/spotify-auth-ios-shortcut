@@ -34,7 +34,7 @@ GET https://chevalier-clement.github.io/spotify-auth-ios-shortcut/?client_id=<CL
 
 | Parameter | Type   | Default                                                                                     | Description                              |
 |-----------|--------|---------------------------------------------------------------------------------------------|------------------------------------------|
-| `scope`   | string | `playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public user-library-read user-library-modify` | Space-separated list of [Spotify scopes](https://developer.spotify.com/documentation/web-api/concepts/scopes). The page displays the full list to the user before redirecting. |
+| `scope`   | string | *(none — public data only)* | Space-separated list of [Spotify scopes](https://developer.spotify.com/documentation/web-api/concepts/scopes). If omitted, Spotify grants access to public data only. The page displays the requested scopes to the user before redirecting. |
 
 ---
 
