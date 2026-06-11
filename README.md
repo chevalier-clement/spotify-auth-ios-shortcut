@@ -41,38 +41,40 @@ GET https://chevalier-clement.github.io/spotify-auth-ios-shortcut/?client_id=<CL
 ## Example
 
 ```
-https://johndoe.github.io/spotify-auth-ios-shortcut/?client_id=908dc84ecc934f38b698a23f2dda73c8&shortcut_name=SpotifyCallback
+https://chevalier-clement.github.io/spotify-auth-ios-shortcut/?client_id=YOUR_CLIENT_ID&shortcut_name=SpotifyCallback
 ```
 
 With a custom scope:
 
 ```
-https://johndoe.github.io/spotify-auth-ios-shortcut/?client_id=908dc84ecc934f38b698a23f2dda73c8&shortcut_name=SpotifyCallback&scope=user-read-playback-state%20user-modify-playback-state
+https://chevalier-clement.github.io/spotify-auth-ios-shortcut/?client_id=YOUR_CLIENT_ID&shortcut_name=SpotifyCallback&scope=user-read-playback-state%20user-modify-playback-state
 ```
 
 ---
 
 ## Setup
 
-### 1. Deploy to GitHub Pages
+> **Want stricter access control?** You can fork this repo, make it private, and host it yourself on a platform that supports authentication (e.g. GitHub Enterprise Cloud, which can require GitHub login before serving a Pages site, or Cloudflare Pages / Vercel with an access policy). This prevents anyone other than authorized users from initiating the OAuth flow with your `client_id`. Note: a standard GitHub private repo does **not** protect the deployed Pages site — the page remains publicly accessible regardless of repo visibility unless your plan explicitly supports authenticated Pages.
 
-Fork or clone this repo, then enable GitHub Pages on the `main` branch from **Settings → Pages**.
+No deployment needed — the page is already hosted at:
 
-Your page URL will be `https://<username>.github.io/<repo>/`.
+```
+https://chevalier-clement.github.io/spotify-auth-ios-shortcut/
+```
 
-### 2. Register your Spotify application
+### 1. Register your Spotify application
 
 1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
 2. Create an application (or use an existing one).
-3. Under **Edit Settings → Redirect URIs**, add your GitHub Pages URL exactly as it appears, e.g.:
+3. Under **Edit Settings → Redirect URIs**, add the following URL exactly:
    ```
-   https://johndoe.github.io/spotify-auth-ios-shortcut/
+   https://chevalier-clement.github.io/spotify-auth-ios-shortcut/
    ```
 4. Copy the **Client ID** — this is the value you pass as `client_id`.
 
 > No Client Secret is required. This page uses the PKCE flow, which is designed for public clients.
 
-### 3. Configure your iOS Shortcut
+### 2. Configure your iOS Shortcut
 
 Create a Shortcut named exactly as the value you pass in `shortcut_name`. Its input will be the raw Spotify access token as plain text.
 
