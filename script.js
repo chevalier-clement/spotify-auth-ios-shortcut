@@ -1,129 +1,196 @@
-const generateRandomString = (length) => {
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const values = crypto.getRandomValues(new Uint8Array(length));
-  return values.reduce((acc, x) => acc + possible[x % possible.length], "");
-};
+const MARKER = ' @';
+const API = 'https://api.spotify.com/v1';
 
-const sha256 = async (plain) => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plain);
-  return window.crypto.subtle.digest('SHA-256', data);
-};
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
 
-const base64encode = (input) => {
-  return btoa(String.fromCharCode(...new Uint8Array(input)))
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-};
+function setStatus(msg) { statusEl.textContent = msg; }
+function log(msg) { logEl.textContent += msg + '\n'; }
+
+async function get(token, url) {
+  const fullUrl = url.startsWith('http') ? url : `${API}${url}`;
+  const res = await fetch(fullUrl, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`${res.status}: ${err.error?.message || res.statusText}`);
+  }
+  return res.json();
+}
+
+async function post(token, path, body) {
+  const res = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`${res.status}: ${err.error?.message || res.statusText}`);
+  }
+  return res.json().catch(() => null);
+}
+
+async function del(token, path, body) {
+  const res = await fetch(`${API}${path}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`${res.status}: ${err.error?.message || res.statusText}`);
+  }
+}
+
+async function paginate(token, initialUrl) {
+  const items = [];
+  let next = initialUrl.startsWith('http') ? initialUrl : `${API}${initialUrl}`;
+  while (next) {
+    const data = await get(token, next);
+    items.push(...(data.items || []).filter(Boolean));
+    next = data.next || null;
+  }
+  return items;
+}
+
+async function getPlaylistTracks(token, playlistId) {
+  const uris = [];
+  let next = `${API}/playlists/${playlistId}/tracks?limit=100`;
+  while (next) {
+    const data = await get(token, next);
+    for (const item of data.items || []) {
+      const uri = item?.track?.uri;
+      if (uri && uri.startsWith('spotify:track:')) uris.push(uri);
+    }
+    next = data.next || null;
+  }
+  return uris;
+}
 
 (async () => {
-  const redirectUri = window.location.origin + window.location.pathname;
-  const urlParams = new URLSearchParams(window.location.search);
-  const code = urlParams.get('code');
-  const error = urlParams.get('error');
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  const shortcutName = params.get('shortcut_name');
 
-  if (error) {
-    document.getElementById('status').textContent = 'Error: ' + error;
+  if (!token) {
+    setStatus('Error: missing token parameter.');
     return;
   }
 
-  if (!code) {
-    const clientId = urlParams.get('client_id');
-    const shortcutName = urlParams.get('shortcut_name');
-    const scope = urlParams.get('scope') || '';
+  try {
+    setStatus('Fetching user profile…');
+    const me = await get(token, '/me');
+    const userId = me.id;
+    log(`User: ${me.display_name || userId}`);
 
-    if (!clientId || !shortcutName) {
-      document.getElementById('status').textContent = 'Missing required parameters: client_id and shortcut_name.';
+    setStatus('Loading playlists…');
+    const allPlaylists = await paginate(token, '/me/playlists?limit=50');
+    log(`${allPlaylists.length} playlists found`);
+
+    // Separate marked playlists from existing Mixed playlists
+    const markedPlaylists = [];
+    const mixedByName = {};
+
+    for (const p of allPlaylists) {
+      if (p.owner?.id !== userId) continue;
+      if (p.name.endsWith(' - Mixed')) {
+        mixedByName[p.name] = p;
+      } else if (p.name.endsWith(MARKER)) {
+        markedPlaylists.push(p);
+      }
+    }
+    log(`${markedPlaylists.length} marked playlist(s) (@)`);
+
+    // Group by prefix — everything before the last " - " (without the marker)
+    const groups = new Map();
+    for (const p of markedPlaylists) {
+      const baseName = p.name.slice(0, -MARKER.length);
+      const lastDash = baseName.lastIndexOf(' - ');
+      if (lastDash === -1) continue;
+      const prefix = baseName.slice(0, lastDash);
+      if (!groups.has(prefix)) groups.set(prefix, []);
+      groups.get(prefix).push(p);
+    }
+
+    if (groups.size === 0) {
+      const msg = 'No groups found. Make sure your playlists end with @ and follow the "<Prefix> - <Name> @" format.';
+      setStatus(msg);
+      log(msg);
       return;
     }
 
-    const scopeList = document.getElementById('scope-list');
-    const scopes = scope.split(' ').filter(Boolean);
-    if (scopes.length === 0) {
-      const li = document.createElement('li');
-      li.textContent = 'Public data only (no additional permissions)';
-      scopeList.appendChild(li);
-    } else {
-      scopes.forEach(s => {
-        const li = document.createElement('li');
-        li.textContent = s;
-        scopeList.appendChild(li);
-      });
+    log(`${groups.size} group(s): ${[...groups.keys()].join(', ')}`);
+
+    let created = 0, updated = 0;
+
+    for (const [prefix, sources] of groups) {
+      const mixedName = `${prefix} - Mixed`;
+      setStatus(`Syncing: ${mixedName}…`);
+      log(`\n▶ ${mixedName}`);
+
+      // Collect all unique track URIs from source playlists
+      const targetSet = new Set();
+      for (const p of sources) {
+        log(`  • "${p.name}"`);
+        const uris = await getPlaylistTracks(token, p.id);
+        uris.forEach(uri => targetSet.add(uri));
+      }
+      log(`  → ${targetSet.size} unique track(s) in group`);
+
+      // Find or create the Mixed playlist
+      let mixedPlaylist = mixedByName[mixedName];
+      const isNew = !mixedPlaylist;
+
+      if (isNew) {
+        log(`  Creating "${mixedName}"…`);
+        mixedPlaylist = await post(token, `/users/${userId}/playlists`, {
+          name: mixedName,
+          public: false,
+          description: 'Auto-generated. Do not edit manually.',
+        });
+        created++;
+      } else {
+        updated++;
+      }
+
+      // Compute diff against current Mixed content
+      const currentUris = isNew ? [] : await getPlaylistTracks(token, mixedPlaylist.id);
+      const currentSet = new Set(currentUris);
+
+      const toAdd = [...targetSet].filter(uri => !currentSet.has(uri));
+      const toRemove = currentUris.filter(uri => !targetSet.has(uri));
+
+      log(`  +${toAdd.length} to add, -${toRemove.length} to remove`);
+
+      for (let i = 0; i < toRemove.length; i += 100) {
+        const batch = toRemove.slice(i, i + 100).map(uri => ({ uri }));
+        await del(token, `/playlists/${mixedPlaylist.id}/tracks`, { tracks: batch });
+      }
+
+      for (let i = 0; i < toAdd.length; i += 100) {
+        const batch = toAdd.slice(i, i + 100);
+        await post(token, `/playlists/${mixedPlaylist.id}/tracks`, { uris: batch });
+      }
     }
 
-    document.getElementById('status').hidden = true;
-    document.getElementById('auth-prompt').hidden = false;
+    const summary = `Sync complete: ${created} created, ${updated} updated.`;
+    setStatus(summary);
+    log(`\n✓ ${summary}`);
 
-    document.getElementById('authorize-btn').addEventListener('click', async () => {
-      const codeVerifier = generateRandomString(64);
-      const codeChallenge = base64encode(await sha256(codeVerifier));
-      const state = generateRandomString(32);
-
-      window.localStorage.setItem('code_verifier', codeVerifier);
-      window.localStorage.setItem('client_id', clientId);
-      window.localStorage.setItem('shortcut_name', shortcutName);
-      window.localStorage.setItem('oauth_state', state);
-
-      const authParams = {
-        response_type: 'code',
-        client_id: clientId,
-        code_challenge_method: 'S256',
-        code_challenge: codeChallenge,
-        redirect_uri: redirectUri,
-        state,
-      };
-      if (scope) authParams.scope = scope;
-
-      const authUrl = new URL('https://accounts.spotify.com/authorize');
-      authUrl.search = new URLSearchParams(authParams).toString();
-
-      window.location.href = authUrl.toString();
-    });
-
-  } else {
-    const returnedState = urlParams.get('state');
-    const expectedState = window.localStorage.getItem('oauth_state');
-
-    window.localStorage.removeItem('oauth_state');
-
-    if (!returnedState || returnedState !== expectedState) {
-      document.getElementById('status').textContent = 'Error: state mismatch — possible CSRF attack.';
-      return;
+    if (shortcutName) {
+      window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent(shortcutName)}&input=text&text=${encodeURIComponent(summary)}`;
     }
 
-    const clientId = window.localStorage.getItem('client_id');
-    const shortcutName = window.localStorage.getItem('shortcut_name');
-    const codeVerifier = window.localStorage.getItem('code_verifier');
-
-    window.localStorage.removeItem('code_verifier');
-    window.localStorage.removeItem('client_id');
-    window.localStorage.removeItem('shortcut_name');
-
-    let token;
-    try {
-      const response = await fetch('https://accounts.spotify.com/api/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: clientId,
-          code,
-          redirect_uri: redirectUri,
-          code_verifier: codeVerifier,
-        }),
-      });
-      token = await response.json();
-    } catch {
-      document.getElementById('status').textContent = 'Error: network request failed.';
-      return;
-    }
-
-    if (token.error) {
-      document.getElementById('status').textContent = 'Error: ' + token.error_description;
-      return;
-    }
-
-    window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent(shortcutName)}&input=text&text=${encodeURIComponent(token.access_token)}`;
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    log(`✗ ${err.message}`);
   }
 })();
